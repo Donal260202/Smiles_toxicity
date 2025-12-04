@@ -96,15 +96,18 @@ if uploaded_file:
     with st.spinner("🔬 Computing Mordred descriptors..."):
         desc_series = df["smiles"].apply(compute_mordred)
 
-        # Replace None with NaNs to prevent DataFrame creation error
+        # Convert Mordred Results to lists of required features
         desc_series_safe = []
         for d in desc_series:
             if d is None:
+                # Completely invalid molecule
                 desc_series_safe.append([np.nan] * len(REQ_FEATURES))
             else:
-                # Convert Mordred Series to list, select only required features
-                d_selected = [d.get(f, np.nan) for f in REQ_FEATURES]
-                desc_series_safe.append(d_selected)
+                # Extract descriptor values safely
+                d_series = pd.Series({
+                    f: (d[f].value if d[f] is not None else np.nan) for f in REQ_FEATURES
+                })
+                desc_series_safe.append(d_series.tolist())
 
         df_desc = pd.DataFrame(desc_series_safe, columns=REQ_FEATURES)
 
@@ -167,3 +170,5 @@ if uploaded_file:
     # ===============================
     st.subheader("⬇️ Download Results")
     download_excel(df, "toxicity_predictions.xlsx")
+
+
