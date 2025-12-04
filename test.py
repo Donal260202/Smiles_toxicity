@@ -1,87 +1,161 @@
-import os
-import shutil
-import random
-import yaml
-from ultralytics import YOLO
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
+from rdkit import Chem
+from mordred import Calculator, descriptors
+from tensorflow.keras.models import load_model
+from io import BytesIO
 
-def split_dataset(datapath, train_pct=0.9, output_base="C:\\Users\\Admin\\Downloads"):
-    images_dir = os.path.join(datapath, 'images')
-    labels_dir = os.path.join(datapath, 'labels')
+# ===============================
+# PAGE CONFIG
+# ===============================
+st.set_page_config(page_title="SMILES Toxicity Predictor", layout="wide")
 
-    all_images = [f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-    all_images.sort()
-    random.shuffle(all_images)
+# ===============================
+# CONFIG
+# ===============================
+MODEL_FILES = [
+    "ensemble_model_1.h5",
+    "ensemble_model_2.h5",
+    "ensemble_model_3.h5",
+    "ensemble_model_4.h5",
+    "ensemble_model_5.h5"
+]
 
-    split_idx = int(len(all_images) * train_pct)
-    train_images = all_images[:split_idx]
-    val_images = all_images[split_idx:]
+X_SCALER_FILE = "x_scaler.pkl"
+Y_SCALER_FILE = "y_scaler.pkl"
+FEATURE_FILE = "selected_mordred_features.txt"
 
-    def copy_files(image_list, split_name):
-        image_out_dir = os.path.join(output_base, split_name, 'images')
-        label_out_dir = os.path.join(output_base, split_name, 'labels')
-        os.makedirs(image_out_dir, exist_ok=True)
-        os.makedirs(label_out_dir, exist_ok=True)
+# ===============================
+# CACHE: LOAD MODELS & SCALERS
+# ===============================
+@st.cache_resource
+def load_all_models():
+    models = [load_model(m) for m in MODEL_FILES]
+    x_scaler = joblib.load(X_SCALER_FILE)
+    y_scaler = joblib.load(Y_SCALER_FILE)
 
-        for img in image_list:
-            img_path = os.path.join(images_dir, img)
-            label_name = os.path.splitext(img)[0] + '.txt'
-            label_path = os.path.join(labels_dir, label_name)
+    with open(FEATURE_FILE) as f:
+        features = [line.strip() for line in f if line.strip() != ""]
 
-            shutil.copy(img_path, os.path.join(image_out_dir, img))
-            if os.path.exists(label_path):
-                shutil.copy(label_path, os.path.join(label_out_dir, label_name))
-            else:
-                print(f"⚠️ Warning: Label for {img} not found!")
+    return models, x_scaler, y_scaler, features
 
-    copy_files(train_images, 'train')
-    copy_files(val_images, 'val')
+models, x_scaler, y_scaler, REQ_FEATURES = load_all_models()
 
-    print(f"✅ Dataset split done! {len(train_images)} training and {len(val_images)} validation images.")
+# ===============================
+# MORDRED CALCULATOR
+# ===============================
+calc = Calculator(descriptors, ignore_3D=True)
 
+def compute_mordred(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    try:
+        return calc(mol)
+    except:
+        return None
 
-def create_data_yaml(path_to_classes_txt, path_to_data_yaml, base_path="C:\\Users\\Admin\\Downloads"):
-    if not os.path.exists(path_to_classes_txt):
-        print(f'❌ classes.txt not found at {path_to_classes_txt}')
-        return
-
-    with open(path_to_classes_txt, 'r') as f:
-        classes = [line.strip() for line in f if line.strip()]
-    number_of_classes = len(classes)
-
-    data = {
-        'train': os.path.join(base_path, 'train', 'images'),
-        'val': os.path.join(base_path, 'val', 'images'),
-        'nc': number_of_classes,
-        'names': classes
-    }
-
-    with open(path_to_data_yaml, 'w') as f:
-        yaml.dump(data, f, sort_keys=False)
-
-    print(f'✅ Created data.yaml at {path_to_data_yaml}')
-    print('\n📄 data.yaml content:\n')
-    print(yaml.dump(data, sort_keys=False))
-
-
-def main():
-    dataset_path = "C:\\Users\\Admin\\Downloads\\archive\\yolo_output1"
-    split_dataset(dataset_path)
-
-    path_to_classes_txt = os.path.join(dataset_path, "classes.txt")
-    path_to_data_yaml = os.path.join(dataset_path, "data.yaml")
-    create_data_yaml(path_to_classes_txt, path_to_data_yaml)
-
-    # ✅ Replace 'yolo11n.pt' with a valid model
-    model = YOLO("yolov8n.pt")  # use yolov8n, yolov8s, etc.
-
-    # ✅ Train with GPU
-    results = model.train(
-        data=path_to_data_yaml,
-        epochs=20,
-        imgsz=640,
-        device='0'  # force to use GPU 0
+# ===============================
+# DOWNLOAD BUTTON
+# ===============================
+def download_excel(df, filename):
+    output = BytesIO()
+    df.to_excel(output, index=False)
+    st.download_button(
+        "⬇️ Download Predictions",
+        data=output.getvalue(),
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+# ===============================
+# UI
+# ===============================
+st.title("🧪 SMILES-Based Toxicity Predictor (5-Model Ensemble)")
+st.markdown("Upload an Excel file with a column named **`smiles`**.")
 
-if __name__ == "__main__":
-    main()
+uploaded_file = st.file_uploader("📤 Upload Excel File", type=["xlsx"])
+
+# ===============================
+# PROCESS
+# ===============================
+if uploaded_file:
+
+    df = pd.read_excel(uploaded_file)
+
+    if "smiles" not in df.columns:
+        st.error("❌ Column 'smiles' not found!")
+        st.stop()
+
+    with st.spinner("🔬 Computing Mordred descriptors..."):
+        desc_series = df["smiles"].apply(compute_mordred)
+        df_desc = pd.DataFrame(desc_series.tolist())
+
+    # ===============================
+    # CHECK FEATURES
+    # ===============================
+    missing = set(REQ_FEATURES) - set(df_desc.columns)
+    if missing:
+        st.error(f"❌ Missing Mordred features in file: {list(missing)[:10]}")
+        st.stop()
+
+    # ===============================
+    # SELECT & CLEAN FEATURES
+    # ===============================
+    df_selected = df_desc[REQ_FEATURES]
+    df_selected = df_selected.replace([np.inf, -np.inf], np.nan)
+
+    valid_idx = df_selected.dropna().index
+
+    removed = len(df) - len(valid_idx)
+    if removed > 0:
+        st.warning(f"⚠️ {removed} molecules removed due to invalid descriptors.")
+
+    df = df.loc[valid_idx].reset_index(drop=True)
+    df_selected = df_selected.loc[valid_idx].reset_index(drop=True)
+
+    if df.empty:
+        st.error("❌ No valid SMILES remaining after cleaning.")
+        st.stop()
+
+    # ===============================
+    # SCALE
+    # ===============================
+    X_scaled = x_scaler.transform(df_selected)
+
+    # ===============================
+    # ENSEMBLE PREDICTION
+    # ===============================
+    with st.spinner("🤖 Running ensemble prediction..."):
+        all_preds = []
+        for model in models:
+            p = model.predict(X_scaled).ravel()
+            all_preds.append(p)
+
+        mean_pred_scaled = np.mean(all_preds, axis=0)
+
+    # ===============================
+    # INVERSE SCALE
+    # ===============================
+    y_pred = y_scaler.inverse_transform(mean_pred_scaled.reshape(-1, 1)).ravel()
+
+    # ===============================
+    # OUTPUT
+    # ===============================
+    df["Toxicity_Prediction"] = y_pred
+
+    # ===============================
+    # DISPLAY
+    # ===============================
+    st.success("✅ Prediction Completed!")
+
+    st.subheader("📊 Results (Top 20)")
+    st.dataframe(df.head(20), use_container_width=True)
+
+    # ===============================
+    # DOWNLOAD
+    # ===============================
+    st.subheader("⬇️ Download Results")
+    download_excel(df, "toxicity_predictions.xlsx")
