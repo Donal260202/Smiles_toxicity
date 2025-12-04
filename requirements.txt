@@ -6,4 +6,4 @@ tensorflow
 mordred
 openpyxl
 rdkit
-sklearn
+scikit-learn
