@@ -5,3 +5,4 @@ joblib
 tensorflow
 mordred
 openpyxl
+rdkit
