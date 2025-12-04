@@ -36,7 +36,7 @@ FEATURE_FILE = "selected_mordred_features.txt"
 # ===============================
 @st.cache_resource
 def load_all_models():
-    models = [load_model(m, compile=False) for m in MODEL_FILES]   # ✅ FIXED
+    models = [load_model(m, compile=False) for m in MODEL_FILES]
     x_scaler = joblib.load(X_SCALER_FILE)
     y_scaler = joblib.load(Y_SCALER_FILE)
 
@@ -98,24 +98,19 @@ if uploaded_file:
         df_desc = pd.DataFrame(desc_series.tolist())
 
     # ===============================
-    # CHECK FEATURES
-    # ===============================
-    missing = set(REQ_FEATURES) - set(df_desc.columns)
-    if missing:
-        st.error(f"❌ Missing Mordred features in file: {list(missing)[:10]}")
-        st.stop()
-
-    # ===============================
     # SELECT & CLEAN FEATURES
     # ===============================
-    df_selected = df_desc[REQ_FEATURES]
+    df_selected = df_desc.reindex(columns=REQ_FEATURES)  # Keep only required features
     df_selected = df_selected.replace([np.inf, -np.inf], np.nan)
 
-    valid_idx = df_selected.dropna().index
+    # Fill missing Mordred features with column mean
+    df_selected = df_selected.fillna(df_selected.mean())
 
+    # Warn about molecules that were completely invalid
+    valid_idx = df_selected.dropna(how='all').index
     removed = len(df) - len(valid_idx)
     if removed > 0:
-        st.warning(f"⚠️ {removed} molecules removed due to invalid descriptors.")
+        st.warning(f"⚠️ {removed} molecules removed due to completely invalid descriptors.")
 
     df = df.loc[valid_idx].reset_index(drop=True)
     df_selected = df_selected.loc[valid_idx].reset_index(drop=True)
@@ -147,7 +142,7 @@ if uploaded_file:
     # ===============================
     # OUTPUT
     # ===============================
-    df["Toxicity_Prediction"] = y_pred
+    df["Toxicity_Prediction"] = y_pred.round(4)
 
     # ===============================
     # DISPLAY
