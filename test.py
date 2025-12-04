@@ -1,3 +1,7 @@
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -32,7 +36,7 @@ FEATURE_FILE = "selected_mordred_features.txt"
 # ===============================
 @st.cache_resource
 def load_all_models():
-    models = [load_model(m) for m in MODEL_FILES]
+    models = [load_model(m, compile=False) for m in MODEL_FILES]   # ✅ FIXED
     x_scaler = joblib.load(X_SCALER_FILE)
     y_scaler = joblib.load(Y_SCALER_FILE)
 
@@ -131,9 +135,8 @@ if uploaded_file:
     with st.spinner("🤖 Running ensemble prediction..."):
         all_preds = []
         for model in models:
-            p = model.predict(X_scaled).ravel()
+            p = model.predict(X_scaled, verbose=0).ravel()
             all_preds.append(p)
-
         mean_pred_scaled = np.mean(all_preds, axis=0)
 
     # ===============================
