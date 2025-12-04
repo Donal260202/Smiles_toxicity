@@ -95,13 +95,23 @@ if uploaded_file:
 
     with st.spinner("🔬 Computing Mordred descriptors..."):
         desc_series = df["smiles"].apply(compute_mordred)
-        df_desc = pd.DataFrame(desc_series.tolist())
+
+        # Replace None with NaNs to prevent DataFrame creation error
+        desc_series_safe = []
+        for d in desc_series:
+            if d is None:
+                desc_series_safe.append([np.nan] * len(REQ_FEATURES))
+            else:
+                # Convert Mordred Series to list, select only required features
+                d_selected = [d.get(f, np.nan) for f in REQ_FEATURES]
+                desc_series_safe.append(d_selected)
+
+        df_desc = pd.DataFrame(desc_series_safe, columns=REQ_FEATURES)
 
     # ===============================
-    # SELECT & CLEAN FEATURES
+    # CLEAN FEATURES
     # ===============================
-    df_selected = df_desc.reindex(columns=REQ_FEATURES)  # Keep only required features
-    df_selected = df_selected.replace([np.inf, -np.inf], np.nan)
+    df_selected = df_desc.replace([np.inf, -np.inf], np.nan)
 
     # Fill missing Mordred features with column mean
     df_selected = df_selected.fillna(df_selected.mean())
